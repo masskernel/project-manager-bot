@@ -1,4 +1,4 @@
-// index.js — Project Manager bot (archive/delete fix + explicit bot perms + robust targeting)
+// index.js — Project Manager bot (salons privés par défaut + archive/delete robustes)
 require('dotenv').config();
 const {
   Client,
@@ -22,7 +22,7 @@ const client = new Client({
 
 const P = PermissionsBitField.Flags;
 
-// -------- utils
+// ====== Utils ======
 const slugify = (s) =>
   s.normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -57,7 +57,6 @@ const COLORED_EMOJIS = ['🔴', '🟠', '🟡', '🟢', '🔵', '🟣', '🟤'];
 const bannerName = (projectName, emoji) => `${emoji} ═════ ${projectName} ═════ ${emoji}`;
 const voiceName  = (slug) => `vocal – réunion・p-${slug}`;
 
-// Marqueur fiable injecté dans topic
 function buildTopic({ slug, roleId, tag }) {
   const parts = [`PROJECT:${slug}`];
   if (roleId) parts.push(`ROLE:${roleId}`);
@@ -65,7 +64,37 @@ function buildTopic({ slug, roleId, tag }) {
   return parts.join(' | ');
 }
 
-// Récupère channels du projet via le topic PROJECT:<slug> (fiable)
+// Overwrites PRIVÉS par défaut pour chaque salon créé
+function channelOverwrites(guild, roleId) {
+  const botId = guild.members.me.id;
+  const everyoneId = guild.roles.everyone.id;
+
+  return [
+    // On verrouille explicitement @everyone
+    { id: everyoneId, deny: [P.ViewChannel] },
+
+    // Admin et Membres : peuvent voir/consulter
+    { id: ADMIN_ROLE_ID,   allow: [P.ViewChannel, P.ReadMessageHistory] },
+    { id: MEMBERS_ROLE_ID, allow: [P.ViewChannel, P.ReadMessageHistory] },
+
+    // Le bot a les pleins droits utiles
+    { id: botId, allow: [
+      P.ViewChannel, P.ManageChannels, P.ManageRoles, P.ManageThreads,
+      P.ReadMessageHistory, P.SendMessages, P.CreateInstantInvite,
+      P.EmbedLinks, P.AttachFiles, P.AddReactions, P.CreatePublicThreads,
+      P.SendMessagesInThreads, P.CreatePolls, P.Connect, P.Speak, P.Stream
+    ]},
+
+    // Le rôle PROJET a les droits opérationnels
+    { id: roleId, allow: [
+      P.ViewChannel, P.ReadMessageHistory, P.SendMessages, P.CreateInstantInvite,
+      P.EmbedLinks, P.AttachFiles, P.AddReactions, P.CreatePublicThreads,
+      P.SendMessagesInThreads, P.CreatePolls, P.UseExternalEmojis
+    ]}
+  ];
+}
+
+// Récupère les salons texte d’un projet via topic PROJECT:<slug>
 async function getProjectTextChannels(guild, slug) {
   const all = await guild.channels.fetch();
   return [...all.values()].filter(c =>
@@ -75,14 +104,13 @@ async function getProjectTextChannels(guild, slug) {
   );
 }
 
-// Extrait roleId depuis le topic d’un des salons texte
 function extractRoleIdFromTopic(ch) {
   if (!ch?.topic) return null;
   const m = ch.topic.match(/ROLE:(\d{17,20})/);
   return m ? m[1] : null;
 }
 
-// Assure la catégorie + overwrites, y compris pour le bot
+// Assure catégories + overwrites sur catégories (bot, admin, membres, @everyone)
 async function ensureCategoryWithPerms(guild, name, mode) {
   const botId = guild.members.me.id;
   const all = await guild.channels.fetch();
@@ -93,7 +121,6 @@ async function ensureCategoryWithPerms(guild, name, mode) {
 
   const everyoneId = guild.roles.everyone.id;
 
-  // Droits utiles pour que le bot puisse déplacer/supprimer
   const botAllow = [
     P.ViewChannel, P.ManageChannels, P.ManageRoles, P.ManageThreads,
     P.Connect, P.Speak, P.MoveMembers, P.ReadMessageHistory, P.SendMessages
@@ -101,9 +128,9 @@ async function ensureCategoryWithPerms(guild, name, mode) {
 
   const overwritesActive = [
     { id: everyoneId, deny: [P.ViewChannel] },
-    { id: ADMIN_ROLE_ID, allow: [P.ViewChannel, P.ReadMessageHistory] },
+    { id: ADMIN_ROLE_ID,   allow: [P.ViewChannel, P.ReadMessageHistory] },
     { id: MEMBERS_ROLE_ID, allow: [P.ViewChannel, P.ReadMessageHistory] },
-    { id: botId,       allow: botAllow },
+    { id: botId,           allow: botAllow },
   ];
 
   const denyArchive = [
@@ -114,16 +141,16 @@ async function ensureCategoryWithPerms(guild, name, mode) {
 
   const overwritesArchive = [
     { id: everyoneId, deny: [P.ViewChannel] },
-    { id: ADMIN_ROLE_ID,  allow: [P.ViewChannel, P.ReadMessageHistory],  deny: denyArchive },
-    { id: MEMBERS_ROLE_ID,allow: [P.ViewChannel, P.ReadMessageHistory],  deny: denyArchive },
-    { id: botId,          allow: botAllow }, // le bot garde les pleins droits
+    { id: ADMIN_ROLE_ID,   allow: [P.ViewChannel, P.ReadMessageHistory], deny: denyArchive },
+    { id: MEMBERS_ROLE_ID, allow: [P.ViewChannel, P.ReadMessageHistory], deny: denyArchive },
+    { id: botId,           allow: botAllow },
   ];
 
   await cat.permissionOverwrites.set(mode === 'archive' ? overwritesArchive : overwritesActive);
   return cat;
 }
 
-// -------- create / archive / unarchive / delete
+// ====== Create / Archive / Unarchive / Delete ======
 async function createProject(guild, projectName) {
   const slug = slugify(projectName);
   const activeCat = await ensureCategoryWithPerms(guild, ACTIVE_CATEGORY_NAME, 'active');
@@ -137,34 +164,35 @@ async function createProject(guild, projectName) {
   const roleId = projRole.id;
 
   const emoji = COLORED_EMOJIS[Math.floor(Math.random() * COLORED_EMOJIS.length)];
+
   const tasks = [];
 
-  // Bannière
+  // Bannière (privée)
   tasks.push(() => guild.channels.create({
     name: bannerName(projectName, emoji),
     type: ChannelType.GuildText,
     parent: activeCat,
     topic: buildTopic({ slug, roleId, tag: 'BANNER' }),
-    permissionOverwrites: [{ id: roleId, allow: [P.ViewChannel, P.SendMessages] }],
+    permissionOverwrites: channelOverwrites(guild, roleId),
   }));
 
-  // Salons texte standard
+  // Salons texte standard (privés)
   for (const n of EXPECTED_TEXTS) {
     tasks.push(() => guild.channels.create({
       name: n,
       type: ChannelType.GuildText,
       parent: activeCat,
       topic: buildTopic({ slug, roleId, tag: n.toUpperCase() }),
-      permissionOverwrites: [{ id: roleId, allow: [P.ViewChannel, P.SendMessages] }],
+      permissionOverwrites: channelOverwrites(guild, roleId),
     }));
   }
 
-  // Vocal
+  // Vocal (privé)
   tasks.push(() => guild.channels.create({
     name: voiceName(slug),
     type: ChannelType.GuildVoice,
     parent: activeCat,
-    permissionOverwrites: [{ id: roleId, allow: [P.Connect, P.Speak] }],
+    permissionOverwrites: channelOverwrites(guild, roleId),
   }));
 
   await runLimited(tasks, 3);
@@ -173,10 +201,8 @@ async function createProject(guild, projectName) {
 
 async function archiveProject(guild, projectName) {
   const slug = slugify(projectName);
-  const activeCat  = await ensureCategoryWithPerms(guild, ACTIVE_CATEGORY_NAME,  'active');
   const archiveCat = await ensureCategoryWithPerms(guild, ARCHIVE_CATEGORY_NAME, 'archive');
 
-  // Cible uniquement les salons du projet via topic PROJECT:<slug>
   const textChans = await getProjectTextChannels(guild, slug);
   for (const ch of textChans) {
     if (ch.parentId !== archiveCat.id) {
@@ -184,21 +210,16 @@ async function archiveProject(guild, projectName) {
     }
   }
 
-  // Supprime le vocal du projet
   const all = await guild.channels.fetch();
   const voice = [...all.values()].find(c =>
     c.type === ChannelType.GuildVoice && c.name === voiceName(slug)
   );
   if (voice) await voice.delete().catch(() => {});
 
-  // Supprime le rôle du projet (on récupère l’ID à partir d’un topic)
+  // Supprime le rôle projet
   let roleId = null;
-  for (const ch of textChans) {
-    roleId = extractRoleIdFromTopic(ch);
-    if (roleId) break;
-  }
+  for (const ch of textChans) { roleId = extractRoleIdFromTopic(ch); if (roleId) break; }
   if (!roleId) {
-    // fallback par nom si pas trouvé (rare)
     const rByName = guild.roles.cache.find(r => r.name === `PROJET — ${projectName}`);
     roleId = rByName?.id || null;
   }
@@ -215,7 +236,6 @@ async function unarchiveProject(guild, projectName) {
   const archiveCat = await ensureCategoryWithPerms(guild, ARCHIVE_CATEGORY_NAME, 'archive');
   const activeCat  = await ensureCategoryWithPerms(guild, ACTIVE_CATEGORY_NAME,  'active');
 
-  // Recrée le rôle
   const projRole = await guild.roles.create({
     name: `PROJET — ${projectName}`,
     mentionable: true,
@@ -224,23 +244,23 @@ async function unarchiveProject(guild, projectName) {
   });
   const roleId = projRole.id;
 
-  // Ramène uniquement les salons du projet (via topic)
   const textChans = await getProjectTextChannels(guild, slug);
   for (const ch of textChans) {
     await ch.setParent(activeCat).catch(() => {});
-    // On remet un overwrite basique pour le rôle (au cas où)
-    await ch.permissionOverwrites.edit(roleId, { ViewChannel: true, SendMessages: true }).catch(() => {});
-    // Ajoute/patch le topic pour garder le ROLE:<id> à jour
-    const newTopic = buildTopic({ slug, roleId, tag: (ch.topic?.match(/\b(BANNER|BRIEF|DISCUSSION|RESSOURCES|LIVRABLES|RETOURS)\b/)||[])[0] });
+    // réapplique des overwrites privés corrects, incluant le NOUVEAU roleId
+    await ch.permissionOverwrites.set(channelOverwrites(guild, roleId)).catch(() => {});
+    // remet à jour le topic avec le bon ROLE:<id>
+    const tagMatch = ch.topic?.match(/\b(BANNER|BRIEF|DISCUSSION|RESSOURCES|LIVRABLES|RETOURS)\b/);
+    const tag = tagMatch ? tagMatch[0] : undefined;
+    const newTopic = buildTopic({ slug, roleId, tag });
     await ch.setTopic(newTopic).catch(() => {});
   }
 
-  // Recrée le vocal
   await guild.channels.create({
     name: voiceName(slug),
     type: ChannelType.GuildVoice,
     parent: activeCat,
-    permissionOverwrites: [{ id: roleId, allow: [P.Connect, P.Speak] }],
+    permissionOverwrites: channelOverwrites(guild, roleId),
   }).catch(() => {});
 
   return { moved: textChans.length, roleId };
@@ -249,18 +269,15 @@ async function unarchiveProject(guild, projectName) {
 async function deleteProject(guild, projectName) {
   const slug = slugify(projectName);
 
-  // Supprime tous les salons texte du projet (active + archive) via topic
   const textChans = await getProjectTextChannels(guild, slug);
   for (const ch of textChans) await ch.delete().catch(() => {});
 
-  // Supprime le vocal s’il existe
   const all = await guild.channels.fetch();
   const voice = [...all.values()].find(c =>
     c.type === ChannelType.GuildVoice && c.name === voiceName(slug)
   );
   if (voice) await voice.delete().catch(() => {});
 
-  // Supprime le rôle (ID depuis topic si possible)
   let roleId = null;
   for (const ch of textChans) { roleId = extractRoleIdFromTopic(ch); if (roleId) break; }
   if (!roleId) {
@@ -275,7 +292,11 @@ async function deleteProject(guild, projectName) {
   return { textDeleted: textChans.length, voiceDeleted: voice ? 1 : 0 };
 }
 
-// -------- wiring
+// ====== Wiring & handlers ======
+process.on('unhandledRejection', (e) => console.error('UNHANDLED', e));
+process.on('uncaughtException', (e) => console.error('UNCAUGHT', e));
+client.on('error', console.error);
+
 client.once('ready', () => {
   console.log(`✅ Connecté en tant que ${client.user.tag}`);
 });
@@ -314,7 +335,6 @@ client.on('interactionCreate', async (interaction) => {
   } catch (err) {
     console.error(err);
     const msg = err?.message || String(err);
-    // Si la reply a déjà été envoyée, on essaie de followUp
     if (interaction.deferred || interaction.replied) {
       await interaction.followUp({ content: `❌ Erreur : ${msg}`, ephemeral: true }).catch(() => {});
     } else {
