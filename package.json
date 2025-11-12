@@ -1,6 +1,7 @@
 {
   "name": "project-manager-bot",
   "version": "1.0.0",
+  "description": "Bot Discord de gestion de projets (création, archivage, suppression, etc.)",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
@@ -11,8 +12,15 @@
     "discord.js": "^14.24.2",
     "dotenv": "^16.6.1"
   },
-  "description": "",
-  "keywords": [],
-  "author": "",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "project",
+    "management"
+  ],
+  "author": "Lauris",
   "license": "ISC"
 }
