@@ -1,4 +1,4 @@
-// index.js — salons privés + détection par TOPIC (PROJECT:<slug>) pour archive/delete/unarchive
+// index.js — salons privés + archive/delete via TOPIC + garde-fou sur permissions
 require('dotenv').config();
 const {
   Client,
@@ -52,33 +52,46 @@ function getUniqueRandomColor(guild) {
   return color;
 }
 
+/** Filtre toute valeur falsy dans une liste de flags (évite "undefined" → crash). */
+const F = (...flags) => flags.filter(Boolean);
+
+/**
+ * Overwrites PRIVÉS explicites pour chaque salon
+ * - @everyone : deny ViewChannel
+ * - Admin, Membres, Rôle Projet : allow View + droits utiles
+ * - Bot : droits étendus
+ */
 function privateOverwrites(guild, projectRoleId, kind /* 'text' | 'voice' */) {
   const botId = guild.members.me.id;
   const everyoneId = guild.roles.everyone.id;
 
-  const commonAllows = [P.ViewChannel, P.ReadMessageHistory];
-  const textAllows   = [P.SendMessages, P.EmbedLinks, P.AttachFiles, P.AddReactions, P.SendMessagesInThreads, P.CreatePublicThreads, P.CreatePolls];
-  const voiceAllows  = [P.Connect, P.Speak, P.Stream];
+  const commonAllows = F(P.ViewChannel, P.ReadMessageHistory);
+  const textAllows   = F(
+    P.SendMessages, P.EmbedLinks, P.AttachFiles, P.AddReactions,
+    P.SendMessagesInThreads, P.CreatePublicThreads, P.CreatePolls // peut être undefined
+  );
+  const voiceAllows  = F(P.Connect, P.Speak, P.Stream);
 
   const allowFor = (roleId) => ({
     id: roleId,
     allow: kind === 'voice'
-      ? [...commonAllows, ...voiceAllows]
-      : [...commonAllows, ...textAllows],
+      ? F(...commonAllows, ...voiceAllows)
+      : F(...commonAllows, ...textAllows),
   });
 
   const botAllow = {
     id: botId,
-    allow: [
+    allow: F(
       P.ViewChannel, P.ManageChannels, P.ManageRoles, P.ManageThreads,
       P.ReadMessageHistory, P.SendMessages, P.EmbedLinks, P.AttachFiles,
-      P.AddReactions, P.CreateInstantInvite, P.SendMessagesInThreads,
-      P.CreatePublicThreads, P.CreatePolls, P.Connect, P.Speak, P.Stream,
-    ],
+      P.AddReactions, P.CreateInstantInvite,
+      P.Connect, P.Speak, P.Stream,
+      P.SendMessagesInThreads, P.CreatePublicThreads, P.CreatePolls // peut être undefined
+    ),
   };
 
   return [
-    { id: everyoneId, deny: [P.ViewChannel] },
+    { id: everyoneId, deny: F(P.ViewChannel) },
     allowFor(ADMIN_ROLE_ID),
     allowFor(MEMBERS_ROLE_ID),
     allowFor(projectRoleId),
@@ -124,6 +137,7 @@ async function createProject(guild, projectName) {
     name: `PROJET — ${projectName}`,
     mentionable: true,
     hoist: true,
+    // "color" émet un warning sur certaines versions → conservé, non bloquant
     color: getUniqueRandomColor(guild),
   });
   const roleId = projRole.id;
@@ -166,21 +180,16 @@ async function archiveProject(guild, projectName) {
   const archiveCat = await ensureCategory(guild, ARCHIVE_CATEGORY_NAME);
   const all = await guild.channels.fetch();
 
-  // Tous les salons texte du projet (où qu'ils soient), détectés par TOPIC
   const textChannels = Array.from(all.values()).filter((c) => hasProjectTag(c, slug));
   for (const ch of textChannels) {
-    if (ch.parentId !== archiveCat.id) {
-      await ch.setParent(archiveCat).catch(() => {});
-    }
+    if (ch.parentId !== archiveCat.id) await ch.setParent(archiveCat).catch(() => {});
   }
 
-  // Supprime le vocal
   const voice = Array.from(all.values()).find(
     (c) => c.type === ChannelType.GuildVoice && c.name === voiceName(slug)
   );
   if (voice) await voice.delete().catch(() => {});
 
-  // Supprime le rôle projet
   const role = guild.roles.cache.find((r) => r.name === `PROJET — ${projectName}`);
   if (role) await role.delete().catch(() => {});
 
@@ -202,24 +211,18 @@ async function unarchiveProject(guild, projectName) {
   const roleId = projRole.id;
 
   const all = await guild.channels.fetch();
-
-  // Récupère tous les salons texte du projet dans la catégorie d'archive (topic)
   const textChannels = Array.from(all.values()).filter(
     (c) => c.parentId === archiveCat.id && hasProjectTag(c, slug)
   );
 
   for (const ch of textChannels) {
-    // remet en active
     await ch.setParent(activeCat).catch(() => {});
-    // réapplique les overwrites privés avec le NOUVEAU roleId
     await ch.permissionOverwrites.set(privateOverwrites(guild, roleId, 'text')).catch(() => {});
-    // met à jour le topic (ROLE:<id> + garde le TAG si présent)
     const tag = extractTagFromTopic(ch.topic);
     const newTopic = buildTopic({ slug, roleId, tag });
     await ch.setTopic(newTopic).catch(() => {});
   }
 
-  // Recrée le vocal
   await guild.channels.create({
     name: voiceName(slug),
     type: ChannelType.GuildVoice,
@@ -235,17 +238,14 @@ async function deleteProject(guild, projectName) {
   const slug = slugify(projectName);
   const all = await guild.channels.fetch();
 
-  // Tous les textes du projet (topic)
   const textChannels = Array.from(all.values()).filter((c) => hasProjectTag(c, slug));
   for (const ch of textChannels) await ch.delete().catch(() => {});
 
-  // Supprime le vocal
   const voice = Array.from(all.values()).find(
     (c) => c.type === ChannelType.GuildVoice && c.name === voiceName(slug)
   );
   if (voice) await voice.delete().catch(() => {});
 
-  // Supprime le rôle
   const role = guild.roles.cache.find((r) => r.name === `PROJET — ${projectName}`);
   if (role) await role.delete().catch(() => {});
 
