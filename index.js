@@ -315,11 +315,7 @@ client.on('interactionCreate', async (interaction) => {
     console.error(err);
     const msg = err?.message || String(err);
     // Si la reply a déjà été envoyée, on essaie de followUp
-    if (interaction.deferred || interaction.replied) {cd ~/project-manager-bot
-git status                # pour vérifier que index.js est modifié
-git add index.js
-git commit -m "Fix archive/delete: bot perms + topic targeting + robustness"
-git push
+    if (interaction.deferred || interaction.replied) {
       await interaction.followUp({ content: `❌ Erreur : ${msg}`, ephemeral: true }).catch(() => {});
     } else {
       await interaction.reply({ content: `❌ Erreur : ${msg}`, ephemeral: true }).catch(() => {});
