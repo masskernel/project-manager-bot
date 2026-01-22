@@ -1,0 +1,22 @@
+[Unit]
+Description=Project Manager Discord Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/project-manager-bot
+ExecStart=/usr/bin/node /home/ubuntu/project-manager-bot/index.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+
+# Sécurité "soft" (sans casser ton app)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target
