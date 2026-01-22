@@ -1,40 +1,5 @@
 # Project Manager Bot (Discord)
 
-Bot Discord pour gérer des **projets** (création, archivage, désarchivage, suppression) avec salons privés et rôles dédiés.
-
-✅ Version recommandée : **Oracle Cloud VM + systemd (24/7)**  
-📦 Ancienne version (Railway) : voir [docs/railway.md](docs/railway.md)
-
----
-
-## 1) Fonctionnalités
-
-- `/newproject <nom>` : crée un rôle projet + 1 bannière + salons (brief / discussion / ressources / livrables / retours) + 1 vocal
-- `/archive <nom>` : archive le projet (déplace les salons dans la catégorie d’archives + supprime vocal + rôle)
-- `/unarchive <nom>` : restaure le projet (catégorie active + recrée vocal + rôle)
-- `/delete <nom>` : supprime définitivement tous les salons + rôle
-
-Technique : chaque salon texte contient un `topic` du type `PROJECT:<slug>`.
-
----
-
-## 2) Prérequis
-
-- Une VM Ubuntu (Oracle Cloud ou autre)
-- Node.js 20+
-- Un bot Discord créé dans Discord Developer Portal
-- Un serveur Discord où tu peux créer rôles / salons
-
----
-
-## 3) Installation sur Oracle Cloud (Ubuntu 22.04)
-
-### A) Mettre à jour + installer les dépendances
-
-```bash
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y git curl# Project Manager Bot (Discord)
-
 Bot Discord pour gérer des **projets** (création, archivage, désarchivage, suppression) avec salons privés et rôles dédiés.  
 Stack : **Node 18+**, **discord.js v14**, hébergé sur **Railway**.
 
